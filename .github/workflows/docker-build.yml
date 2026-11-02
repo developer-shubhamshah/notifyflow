@@ -4,7 +4,7 @@ on:
   workflow_call:
     inputs:
       image-name:
-        description: Docker image name
+        description: ECR repository name
         required: true
         type: string
       context:
@@ -18,21 +18,42 @@ on:
 
 jobs:
   build:
-    name: Build ${{ inputs.image-name }}
+    name: Build and Push ${{ inputs.image-name }}
     runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+      id-token: write
+
+    env:
+      AWS_REGION: ap-south-1
+      ECR_REGISTRY: 981006822520.dkr.ecr.ap-south-1.amazonaws.com
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7
 
+      - name: Configure AWS credentials
+        if: github.event_name == 'push'
+        uses: aws-actions/configure-aws-credentials@v5
+        with:
+          role-to-assume: arn:aws:iam::981006822520:role/GitHubActions-NotifyFlow-ECR
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        if: github.event_name == 'push'
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
 
-      - name: Build Docker image
+      - name: Build and Push Docker image
         uses: docker/build-push-action@v7
         with:
           context: ${{ inputs.context }}
           file: ${{ inputs.dockerfile }}
-          push: false
-          tags: ${{ inputs.image-name }}:latest
-
+          push: ${{ github.event_name == 'push' }}
+          tags: |
+            ${{ env.ECR_REGISTRY }}/${{ inputs.image-name }}:latest
+            ${{ env.ECR_REGISTRY }}/${{ inputs.image-name }}:${{ github.sha }}

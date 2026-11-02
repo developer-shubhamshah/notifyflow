@@ -14,6 +14,10 @@ on:
       - 'apps/api/**'
       - '.github/workflows/**'
 
+permissions:
+  contents: read
+  id-token: write
+
 jobs:
   api-docker-build:
     uses: ./.github/workflows/docker-build.yml
