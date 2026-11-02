@@ -1,0 +1,28 @@
+
+name: NotifyFlow Frontend Build
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'apps/web/**'
+      - '.github/workflows/frontend-build.yml'
+  pull_request:
+    branches:
+      - main
+    paths:
+      - 'apps/web/**'
+      - '.github/workflows/frontend-build.yml'
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  frontend-docker-build:
+    uses: ./.github/workflows/docker-build.yml
+    with:
+      image-name: notifyflow-web
+      context: ./apps/web
+      dockerfile: ./apps/web/Dockerfile
