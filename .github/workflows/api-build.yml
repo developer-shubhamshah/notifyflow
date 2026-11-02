@@ -1,0 +1,23 @@
+﻿name: NotifyFlow API Build
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'apps/api/**'
+      - '.github/workflows/**'
+  pull_request:
+    branches:
+      - main
+    paths:
+      - 'apps/api/**'
+      - '.github/workflows/**'
+
+jobs:
+  api-docker-build:
+    uses: ./.github/workflows/docker-build.yml
+    with:
+      image-name: notifyflow-api
+      context: ./apps/api
+      dockerfile: ./apps/api/Dockerfile
