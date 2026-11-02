@@ -1,0 +1,364 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserRole {
+  OWNER
+  ADMIN
+  MEMBER
+}
+
+enum AccountRole {
+  OWNER
+  ADMIN
+  MEMBER
+}
+
+enum CampaignStatus {
+  DRAFT
+  SCHEDULED
+  QUEUED
+  PROCESSING
+  COMPLETED
+  FAILED
+  CANCELLED
+}
+
+enum MessagingChannel {
+  WHATSAPP
+  SMS
+  EMAIL
+}
+
+enum MessageStatus {
+  PENDING
+  QUEUED
+  SENDING
+  SENT
+  DELIVERED
+  READ
+  FAILED
+  SKIPPED
+  CANCELLED
+}
+
+enum ProviderStatus {
+  ACTIVE
+  INACTIVE
+}
+
+model User {
+  id        String   @id @default(uuid())
+  name      String
+  email     String   @unique
+  password  String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  brands             Brand[]          @relation("BrandOwner")
+  campaignsCreated   Campaign[]       @relation("CampaignCreator")
+  brandMemberships   BrandUser[]
+  refreshSessions    RefreshSession[]
+  accountMemberships AccountUser[]
+}
+
+model Brand {
+  id          String  @id @default(uuid())
+  name        String
+  slug        String
+  description String?
+  logoUrl     String?
+  isActive    Boolean @default(true)
+
+  ownerId String
+  owner   User   @relation("BrandOwner", fields: [ownerId], references: [id], onDelete: Cascade)
+
+  members         BrandUser[]
+  contacts        Contact[]
+  contactGroups   ContactGroup[]
+  campaigns       Campaign[]
+  providerConfigs BrandProviderConfig[]
+  createdAt       DateTime              @default(now())
+  updatedAt       DateTime              @updatedAt
+
+  accountId String
+  account   Account @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  @@unique([accountId, slug])
+  @@index([ownerId])
+  @@index([accountId])
+}
+
+model BrandUser {
+  id      String   @id @default(uuid())
+  userId  String
+  brandId String
+  role    UserRole @default(MEMBER)
+
+  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  brand Brand @relation(fields: [brandId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  @@unique([userId, brandId])
+  @@index([brandId])
+}
+
+model RefreshSession {
+  id        String    @id @default(uuid())
+  tokenHash String    @unique
+  userId    String
+  expiresAt DateTime
+  revokedAt DateTime?
+  createdAt DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([expiresAt])
+}
+
+model Account {
+  id        String   @id @default(uuid())
+  name      String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  members AccountUser[]
+  brands  Brand[]
+}
+
+model AccountUser {
+  id        String      @id @default(uuid())
+  accountId String
+  userId    String
+  role      AccountRole @default(MEMBER)
+
+  account Account @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  @@unique([accountId, userId])
+  @@index([userId])
+}
+
+model Contact {
+  id      String @id @default(uuid())
+  brandId String
+
+  firstName String
+  lastName  String?
+
+  email  String?
+  mobile String?
+
+  whatsappConsent Boolean @default(false)
+  smsConsent      Boolean @default(false)
+  emailConsent    Boolean @default(false)
+
+  whatsappConsentAt DateTime?
+  smsConsentAt      DateTime?
+  emailConsentAt    DateTime?
+
+  isActive Boolean @default(true)
+
+  brand              Brand                @relation(fields: [brandId], references: [id], onDelete: Cascade)
+  groups             ContactGroupMember[]
+  campaignRecipients CampaignRecipient[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([brandId, mobile])
+  @@index([brandId])
+  @@index([brandId, email])
+  @@index([brandId, isActive])
+}
+
+model ContactGroup {
+  id          String  @id @default(uuid())
+  brandId     String
+  name        String
+  description String?
+  isActive    Boolean @default(true)
+
+  brand          Brand                @relation(fields: [brandId], references: [id], onDelete: Cascade)
+  members        ContactGroupMember[]
+  campaignGroups CampaignGroup[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([brandId, name])
+  @@index([brandId])
+  @@index([brandId, isActive])
+}
+
+model ContactGroupMember {
+  id        String @id @default(uuid())
+  groupId   String
+  contactId String
+
+  group   ContactGroup @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  contact Contact      @relation(fields: [contactId], references: [id], onDelete: Cascade)
+
+  addedAt DateTime @default(now())
+
+  @@unique([groupId, contactId])
+  @@index([contactId])
+}
+
+model Campaign {
+  id          String @id @default(uuid())
+  brandId     String
+  createdById String
+
+  name        String
+  description String?
+  status      CampaignStatus @default(DRAFT)
+
+  scheduledAt DateTime?
+  startedAt   DateTime?
+  completedAt DateTime?
+
+  brand Brand @relation(fields: [brandId], references: [id], onDelete: Cascade)
+
+  createdBy User @relation("CampaignCreator", fields: [createdById], references: [id], onDelete: Restrict)
+
+  channels   CampaignChannel[]
+  groups     CampaignGroup[]
+  recipients CampaignRecipient[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([brandId])
+  @@index([brandId, status])
+  @@index([scheduledAt])
+  @@index([createdById])
+}
+
+model CampaignChannel {
+  id         String           @id @default(uuid())
+  campaignId String
+  channel    MessagingChannel
+
+  // Channel-specific content.
+  // Example: Email subject/body, WhatsApp template, SMS body.
+  content Json
+
+  campaign Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+
+  messages Message[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([campaignId, channel])
+  @@index([campaignId])
+}
+
+model CampaignGroup {
+  id         String @id @default(uuid())
+  campaignId String
+  groupId    String
+
+  campaign Campaign     @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  group    ContactGroup @relation(fields: [groupId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  @@unique([campaignId, groupId])
+  @@index([groupId])
+}
+
+model CampaignRecipient {
+  id         String  @id @default(uuid())
+  campaignId String
+  contactId  String?
+
+  // Recipient snapshot: retained even if the original contact changes.
+  firstName String
+  lastName  String?
+  email     String?
+  mobile    String?
+
+  campaign Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  contact  Contact? @relation(fields: [contactId], references: [id], onDelete: SetNull)
+
+  messages Message[]
+
+  createdAt DateTime @default(now())
+
+  @@unique([campaignId, contactId])
+  @@index([campaignId])
+  @@index([contactId])
+}
+
+model Message {
+  id                String @id @default(uuid())
+  recipientId       String
+  campaignChannelId String
+
+  status MessageStatus @default(PENDING)
+
+  skipReason String?
+
+  providerMessageId String?
+  errorCode         String?
+  errorMessage      String?
+
+  sentAt      DateTime?
+  deliveredAt DateTime?
+  readAt      DateTime?
+
+  recipient       CampaignRecipient @relation(fields: [recipientId], references: [id], onDelete: Cascade)
+  campaignChannel CampaignChannel   @relation(fields: [campaignChannelId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([recipientId, campaignChannelId])
+  @@index([status])
+  @@index([providerMessageId])
+  @@index([campaignChannelId, status])
+}
+
+model BrandProviderConfig {
+  id       String           @id @default(uuid())
+  brandId  String
+  channel  MessagingChannel
+  provider String
+  status   ProviderStatus   @default(INACTIVE)
+
+  // Encrypted provider credentials.
+  credentials Json
+
+  // Provider-specific sender configuration.
+  senderId   String?
+  senderName String?
+
+  // Optional provider account/reference identifier.
+  providerAccountId String?
+  configurationVersion Int @default(1)
+
+  // Connection test details
+  lastTestedAt       DateTime?
+  connectionStatus   String?
+  connectionMessage  String?
+  connectionFingerprint String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  brand Brand @relation(fields: [brandId], references: [id], onDelete: Cascade)
+
+  @@unique([brandId, channel])
+  @@index([brandId, status])
+}
