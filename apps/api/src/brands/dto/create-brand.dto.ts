@@ -1,4 +1,7 @@
+
 import {
+  IsEmail,
+  IsNotEmpty,
   IsOptional,
   IsString,
   IsUrl,
@@ -24,4 +27,18 @@ export class CreateBrandDto {
   })
   @MaxLength(2048)
   logoUrl?: string;
+
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(100)
+  ownerName: string;
+
+  @IsEmail()
+  @MaxLength(255)
+  ownerEmail: string;
+
+  @IsString()
+  @MinLength(12)
+  @MaxLength(128)
+  temporaryPassword: string;
 }

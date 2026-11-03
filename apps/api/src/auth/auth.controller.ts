@@ -1,9 +1,10 @@
+
 import {
-  Body,
-  Controller,
-  Post,
-  Get,
-  UseGuards,
+    Body,
+    Controller,
+    Post,
+    Get,
+    UseGuards,
 } from '@nestjs/common';
 
 import { AuthService } from './auth.service';
@@ -11,8 +12,11 @@ import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
 import { RefreshTokenDto } from './dto/refresh-token.dto';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
+import { PlatformAdminGuard } from './guards/platform-admin.guard';
 import { CurrentUser } from './decorators/current-user.decorator';
 import type { AuthenticatedUser } from './decorators/current-user.decorator';
+import { ChangePasswordDto } from './dto/change-password.dto';
+import { AllowPasswordChange } from './decorators/allow-password-change.decorator';
 
 @Controller('auth')
 export class AuthController {
@@ -21,6 +25,7 @@ export class AuthController {
     ) { }
 
     @Post('register')
+    @UseGuards(JwtAuthGuard, PlatformAdminGuard)
     async register(@Body() registerDto: RegisterDto) {
         return this.authService.register(registerDto);
     }
@@ -42,6 +47,16 @@ export class AuthController {
         return this.authService.logout(
             refreshTokenDto.refreshToken,
         );
+    }
+
+    @Post('change-password')
+    @UseGuards(JwtAuthGuard)
+    @AllowPasswordChange()
+    async changePassword(
+        @CurrentUser('userId') userId: string,
+        @Body() dto: ChangePasswordDto,
+    ) {
+        return this.authService.changePassword(userId, dto);
     }
 
     @Get('profile')

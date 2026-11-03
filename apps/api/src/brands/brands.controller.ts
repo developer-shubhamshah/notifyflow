@@ -17,6 +17,7 @@ import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import type { AuthenticatedUser } from '../auth/decorators/current-user.decorator';
 import { UpdateBrandDto } from './dto/update-brand.dto';
+import { PlatformAdminGuard } from '../auth/guards/platform-admin.guard';
 
 @Controller('brands')
 @UseGuards(JwtAuthGuard)
@@ -26,6 +27,7 @@ export class BrandsController {
     ) { }
 
     @Post()
+    @UseGuards(PlatformAdminGuard)
     async create(
         @CurrentUser() user: AuthenticatedUser,
         @Body() createBrandDto: CreateBrandDto,
@@ -40,7 +42,10 @@ export class BrandsController {
     async findAll(
         @CurrentUser() user: AuthenticatedUser,
     ) {
-        return this.brandsService.findAll(user.userId);
+        return this.brandsService.findAll(
+            user.userId,
+            user.platformRole,
+        );
     }
 
     @Get(':brandId')

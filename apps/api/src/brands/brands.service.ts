@@ -11,7 +11,9 @@ import {
     AccountRole,
     UserRole,
     Prisma,
+    PlatformRole,
 } from '@prisma/client';
+import * as bcrypt from 'bcrypt';
 
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateBrandDto } from './dto/create-brand.dto';
@@ -23,15 +25,25 @@ export class BrandsService {
         private readonly prisma: PrismaService,
     ) { }
 
+
     async create(
         userId: string,
         createBrandDto: CreateBrandDto,
     ) {
-        const { name, description, logoUrl } = createBrandDto;
+        const {
+            name,
+            description,
+            logoUrl,
+            ownerName,
+            ownerEmail,
+            temporaryPassword,
+        } = createBrandDto;
 
-        // Generate slug from brand name.
-        const slug = name
-            .trim()
+        const normalizedEmail = ownerEmail.trim().toLowerCase();
+        const normalizedOwnerName = ownerName.trim();
+        const normalizedBrandName = name.trim();
+
+        const slug = normalizedBrandName
             .toLowerCase()
             .replace(/[^a-z0-9]+/g, '-')
             .replace(/^-+|-+$/g, '');
@@ -42,75 +54,98 @@ export class BrandsService {
             );
         }
 
-        // Find accounts where the user has OWNER or ADMIN access.
-        const memberships =
-            await this.prisma.accountUser.findMany({
-                where: {
-                    userId,
-                    role: {
-                        in: [
-                            AccountRole.OWNER,
-                            AccountRole.ADMIN,
-                        ],
-                    },
-                },
-                include: {
-                    account: true,
-                },
-            });
+        if (!normalizedOwnerName) {
+            throw new BadRequestException('Owner name is required.');
+        }
 
-        if (memberships.length === 0) {
-            throw new ForbiddenException(
-                'You do not have permission to create a brand.',
+        const existingUser = await this.prisma.user.findUnique({
+            where: { email: normalizedEmail },
+            select: { id: true },
+        });
+
+        if (existingUser) {
+            throw new ConflictException(
+                'A user with this email already exists. Use a different email.',
             );
         }
 
-        // Avoid silently creating a brand in the wrong account.
-        if (memberships.length > 1) {
-            throw new BadRequestException(
-                'Multiple accounts found. An account must be selected before creating a brand.',
-            );
-        }
-
-        const accountId = memberships[0].accountId;
+        const hashedPassword = await bcrypt.hash(temporaryPassword, 12);
 
         try {
-            // Create Brand and BrandUser atomically.
-            const brand = await this.prisma.brand.create({
-                data: {
-                    name: name.trim(),
-                    slug,
-                    description: description?.trim(),
-                    logoUrl,
-                    ownerId: userId,
-                    accountId,
+            const result = await this.prisma.$transaction(async (tx) => {
+                // 1. Create brand owner user.
+                const owner = await tx.user.create({
+                    data: {
+                        name: normalizedOwnerName,
+                        email: normalizedEmail,
+                        password: hashedPassword,
+                        mustChangePassword: true,
+                    },
+                    select: {
+                        id: true,
+                        name: true,
+                        email: true,
+                        mustChangePassword: true,
+                    },
+                });
 
-                    members: {
-                        create: {
-                            userId,
-                            role: UserRole.OWNER,
+                // 2. Create a separate account for this brand.
+                const account = await tx.account.create({
+                    data: {
+                        name: normalizedBrandName,
+                    },
+                });
+
+                // 3. Assign account ownership.
+                await tx.accountUser.create({
+                    data: {
+                        accountId: account.id,
+                        userId: owner.id,
+                        role: AccountRole.OWNER,
+                    },
+                });
+
+                // 4. Create brand and assign brand ownership.
+                const brand = await tx.brand.create({
+                    data: {
+                        name: normalizedBrandName,
+                        slug,
+                        description: description?.trim(),
+                        logoUrl,
+                        ownerId: owner.id,
+                        accountId: account.id,
+                        members: {
+                            create: {
+                                userId: owner.id,
+                                role: UserRole.OWNER,
+                            },
                         },
                     },
-                },
-                include: {
-                    account: {
-                        select: {
-                            id: true,
-                            name: true,
+                    include: {
+                        account: {
+                            select: {
+                                id: true,
+                                name: true,
+                            },
+                        },
+                        members: {
+                            select: {
+                                userId: true,
+                                role: true,
+                            },
                         },
                     },
-                    members: {
-                        select: {
-                            userId: true,
-                            role: true,
-                        },
-                    },
-                },
+                });
+
+                return {
+                    owner,
+                    brand,
+                };
             });
 
             return {
-                message: 'Brand created successfully',
-                brand,
+                message: 'Brand and brand owner created successfully',
+                ...result,
             };
         } catch (error) {
             if (
@@ -118,7 +153,7 @@ export class BrandsService {
                 error.code === 'P2002'
             ) {
                 throw new ConflictException(
-                    'A brand with this name already exists in your account.',
+                    'A user or brand with these details already exists.',
                 );
             }
 
@@ -126,9 +161,16 @@ export class BrandsService {
         }
     }
 
-    async findAll(userId: string) {
-        const memberships =
-            await this.prisma.accountUser.findMany({
+
+    async findAll(
+        userId: string,
+        platformRole: PlatformRole,
+    ) {
+        const isPlatformAdmin = platformRole === PlatformRole.ADMIN;
+
+        const memberships = isPlatformAdmin
+            ? []
+            : await this.prisma.accountUser.findMany({
                 where: { userId },
                 select: {
                     accountId: true,
@@ -140,11 +182,13 @@ export class BrandsService {
         );
 
         const brands = await this.prisma.brand.findMany({
-            where: {
-                accountId: {
-                    in: accountIds,
+            where: isPlatformAdmin
+                ? {}
+                : {
+                    accountId: {
+                        in: accountIds,
+                    },
                 },
-            },
             include: {
                 account: {
                     select: {

@@ -11,6 +11,7 @@ import { JwtService } from '@nestjs/jwt';
 import { LoginDto } from './dto/login.dto';
 import { randomUUID, createHash } from 'crypto';
 import { ConfigService } from '@nestjs/config';
+import { ChangePasswordDto } from './dto/change-password.dto';
 
 @Injectable()
 export class AuthService {
@@ -53,10 +54,13 @@ export class AuthService {
         return {
             message: 'Login successful',
             ...tokens,
+            requiresPasswordChange: user.mustChangePassword,
             user: {
                 id: user.id,
                 name: user.name,
                 email: user.email,
+                platformRole: user.platformRole,
+                mustChangePassword: user.mustChangePassword,
             },
         };
     }
@@ -195,6 +199,24 @@ export class AuthService {
             throw new UnauthorizedException('Invalid refresh token payload');
         }
 
+        const user = await this.prisma.user.findUnique({
+            where: { id: payload.sub },
+            select: {
+                id: true,
+                mustChangePassword: true,
+            },
+        });
+
+        if (!user) {
+            throw new UnauthorizedException('User not found');
+        }
+
+        if (user.mustChangePassword) {
+            throw new UnauthorizedException(
+                'Password change required before refreshing tokens',
+            );
+        }
+
         const tokenHash = this.hashRefreshToken(refreshToken);
 
         // Generate replacement tokens before database transaction
@@ -322,4 +344,64 @@ export class AuthService {
             message: 'Logout successful',
         };
     }
+
+    async changePassword(
+        userId: string,
+        dto: ChangePasswordDto,
+    ) {
+        const user = await this.prisma.user.findUnique({
+            where: { id: userId },
+            select: {
+                id: true,
+                password: true,
+                mustChangePassword: true,
+            },
+        });
+
+        if (!user) {
+            throw new UnauthorizedException('User not found');
+        }
+
+        const isCurrentPasswordValid = await bcrypt.compare(
+            dto.currentPassword,
+            user.password,
+        );
+
+        if (!isCurrentPasswordValid) {
+            throw new UnauthorizedException('Current password is incorrect');
+        }
+
+        if (dto.currentPassword === dto.newPassword) {
+            throw new ConflictException(
+                'New password must be different from the current password',
+            );
+        }
+
+        const hashedPassword = await bcrypt.hash(dto.newPassword, 12);
+
+        await this.prisma.$transaction(async (tx) => {
+            await tx.user.update({
+                where: { id: userId },
+                data: {
+                    password: hashedPassword,
+                    mustChangePassword: false,
+                },
+            });
+
+            await tx.refreshSession.updateMany({
+                where: {
+                    userId,
+                    revokedAt: null,
+                },
+                data: {
+                    revokedAt: new Date(),
+                },
+            });
+        });
+
+        return {
+            message: 'Password changed successfully. Please log in again.',
+        };
+    }
+
 }
