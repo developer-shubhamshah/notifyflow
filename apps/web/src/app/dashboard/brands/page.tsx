@@ -222,35 +222,23 @@ export default function BrandsPage() {
         try {
             setSaving(true);
 
-            const API_URL =
-                process.env.NEXT_PUBLIC_API_URL ||
-                "http://localhost:4000";
+            const endpoint = brand.isActive
+                ? `/api/brands/${encodeURIComponent(brand.id)}`
+                : `/api/brands/${encodeURIComponent(brand.id)}/activate`;
 
-            if (!API_URL) {
-                throw new Error(
-                    "NEXT_PUBLIC_API_URL is not configured"
-                );
-            }
-
-            const response = await fetch(
-                `${API_URL}/brands/${encodeURIComponent(brand.id)}${
-                    brand.isActive ? "" : "/activate"
-                }`,
-                {
-                    method: brand.isActive ? "DELETE" : "PATCH",
-                    credentials: "include",
-                    headers: {
-                        "Content-Type": "application/json",
-                    },
-                }
-            );
+            const response = await fetch(endpoint, {
+                method: brand.isActive ? "DELETE" : "PATCH",
+                credentials: "include",
+                headers: {
+                    "Content-Type": "application/json",
+                },
+            });
 
             const data = await response.json().catch(() => ({}));
 
             if (!response.ok) {
                 throw new Error(
-                    data.message ||
-                        `Unable to ${action} brand.`
+                    data.message || `Unable to ${action} brand.`
                 );
             }
 
@@ -265,6 +253,7 @@ export default function BrandsPage() {
             setSaving(false);
         }
     };
+
 
     // Keyboard support for clickable desktop rows.
     const handleBrandKeyDown = (
@@ -526,11 +515,10 @@ export default function BrandsPage() {
 
                                                 <td className="px-6 py-4">
                                                     <span
-                                                        className={`rounded-full px-3 py-1 text-xs font-semibold ${
-                                                            brand.isActive
+                                                        className={`rounded-full px-3 py-1 text-xs font-semibold ${brand.isActive
                                                                 ? "bg-green-50 text-green-700"
                                                                 : "bg-slate-100 text-slate-600"
-                                                        }`}
+                                                            }`}
                                                     >
                                                         {brand.isActive
                                                             ? "Active"
@@ -566,11 +554,10 @@ export default function BrandsPage() {
                                                                             ? "Deactivate"
                                                                             : "Activate"
                                                                     }
-                                                                    className={`rounded-lg border p-2 ${
-                                                                        brand.isActive
+                                                                    className={`rounded-lg border p-2 ${brand.isActive
                                                                             ? "border-red-100 text-red-600 hover:bg-red-50"
                                                                             : "border-green-100 text-green-600 hover:bg-green-50"
-                                                                    }`}
+                                                                        }`}
                                                                 >
                                                                     <Power size={16} />
                                                                 </button>
@@ -635,11 +622,10 @@ export default function BrandsPage() {
                                             </div>
 
                                             <span
-                                                className={`rounded-full px-2.5 py-1 text-xs font-semibold ${
-                                                    brand.isActive
+                                                className={`rounded-full px-2.5 py-1 text-xs font-semibold ${brand.isActive
                                                         ? "bg-green-50 text-green-700"
                                                         : "bg-slate-100 text-slate-600"
-                                                }`}
+                                                    }`}
                                             >
                                                 {brand.isActive
                                                     ? "Active"
