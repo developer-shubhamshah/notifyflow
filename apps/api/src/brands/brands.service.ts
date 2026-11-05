@@ -13,6 +13,7 @@ import {
     Prisma,
     PlatformRole,
 } from '@prisma/client';
+
 import * as bcrypt from 'bcrypt';
 
 import { PrismaService } from '../prisma/prisma.service';
@@ -23,8 +24,11 @@ import { UpdateBrandDto } from './dto/update-brand.dto';
 export class BrandsService {
     constructor(
         private readonly prisma: PrismaService,
-    ) { }
+    ) {}
 
+    // =====================================================
+    // CREATE BRAND
+    // =====================================================
 
     async create(
         userId: string,
@@ -161,6 +165,11 @@ export class BrandsService {
         }
     }
 
+    // =====================================================
+    // GET ALL BRANDS
+    // Platform Admin: All brands
+    // Other users: Their account brands only
+    // =====================================================
 
     async findAll(
         userId: string,
@@ -215,17 +224,33 @@ export class BrandsService {
         };
     }
 
-    async findOne(userId: string, brandId: string) {
+    // =====================================================
+    // GET BRAND BY ID
+    // Platform Admin: Any brand
+    // Other users: Their account brands only
+    // =====================================================
+
+    async findOne(
+        userId: string,
+        brandId: string,
+        platformRole: PlatformRole,
+    ) {
+        const isPlatformAdmin = platformRole === PlatformRole.ADMIN;
+
         const brand = await this.prisma.brand.findFirst({
             where: {
                 id: brandId,
-                account: {
-                    members: {
-                        some: {
-                            userId,
+                ...(isPlatformAdmin
+                    ? {}
+                    : {
+                        account: {
+                            members: {
+                                some: {
+                                    userId,
+                                },
+                            },
                         },
-                    },
-                },
+                    }),
             },
             include: {
                 account: {
@@ -250,9 +275,7 @@ export class BrandsService {
         });
 
         if (!brand) {
-            throw new NotFoundException(
-                'Brand not found.',
-            );
+            throw new NotFoundException('Brand not found.');
         }
 
         return {
@@ -261,22 +284,35 @@ export class BrandsService {
         };
     }
 
+    // =====================================================
+    // UPDATE BRAND
+    // Platform Admin: Any brand
+    // Account OWNER / ADMIN: Their account brands only
+    // =====================================================
+
     async update(
         userId: string,
         brandId: string,
         updateBrandDto: UpdateBrandDto,
+        platformRole: PlatformRole,
     ) {
-        // 1. Find brand and verify account membership
+        const isPlatformAdmin = platformRole === PlatformRole.ADMIN;
+
+        // 1. Find brand with role-aware access.
         const brand = await this.prisma.brand.findFirst({
             where: {
                 id: brandId,
-                account: {
-                    members: {
-                        some: {
-                            userId,
+                ...(isPlatformAdmin
+                    ? {}
+                    : {
+                        account: {
+                            members: {
+                                some: {
+                                    userId,
+                                },
+                            },
                         },
-                    },
-                },
+                    }),
             },
             select: {
                 id: true,
@@ -289,8 +325,9 @@ export class BrandsService {
         }
 
         // 2. Verify account OWNER / ADMIN permission
-        const membership =
-            await this.prisma.accountUser.findUnique({
+        // for non-platform admins.
+        if (!isPlatformAdmin) {
+            const membership = await this.prisma.accountUser.findUnique({
                 where: {
                     accountId_userId: {
                         accountId: brand.accountId,
@@ -302,21 +339,26 @@ export class BrandsService {
                 },
             });
 
-        if (
-            !membership ||
-            (
-                membership.role !== AccountRole.OWNER &&
-                membership.role !== AccountRole.ADMIN
-            )
-        ) {
-            throw new ForbiddenException(
-                'You do not have permission to update this brand.',
-            );
+            if (
+                !membership ||
+                (
+                    membership.role !== AccountRole.OWNER &&
+                    membership.role !== AccountRole.ADMIN
+                )
+            ) {
+                throw new ForbiddenException(
+                    'You do not have permission to update this brand.',
+                );
+            }
         }
 
-        // 3. Prepare update data
-        const { name, description, logoUrl, isActive } =
-            updateBrandDto;
+        // 3. Prepare update data.
+        const {
+            name,
+            description,
+            logoUrl,
+            isActive,
+        } = updateBrandDto;
 
         const data: Prisma.BrandUpdateInput = {};
 
@@ -350,7 +392,7 @@ export class BrandsService {
             data.isActive = isActive;
         }
 
-        // 4. Update brand
+        // 4. Update brand.
         try {
             const updatedBrand = await this.prisma.brand.update({
                 where: {
@@ -391,18 +433,34 @@ export class BrandsService {
         }
     }
 
-    async remove(userId: string, brandId: string) {
-        // 1. Find brand and verify account membership
+    // =====================================================
+    // DEACTIVATE BRAND
+    // Platform Admin: Any brand
+    // Account OWNER / ADMIN: Their account brands only
+    // =====================================================
+
+    async remove(
+        userId: string,
+        brandId: string,
+        platformRole: PlatformRole,
+    ) {
+        const isPlatformAdmin = platformRole === PlatformRole.ADMIN;
+
+        // 1. Find brand with role-aware access.
         const brand = await this.prisma.brand.findFirst({
             where: {
                 id: brandId,
-                account: {
-                    members: {
-                        some: {
-                            userId,
+                ...(isPlatformAdmin
+                    ? {}
+                    : {
+                        account: {
+                            members: {
+                                some: {
+                                    userId,
+                                },
+                            },
                         },
-                    },
-                },
+                    }),
             },
             select: {
                 id: true,
@@ -416,8 +474,9 @@ export class BrandsService {
         }
 
         // 2. Verify account OWNER / ADMIN permission
-        const membership =
-            await this.prisma.accountUser.findUnique({
+        // for non-platform admins.
+        if (!isPlatformAdmin) {
+            const membership = await this.prisma.accountUser.findUnique({
                 where: {
                     accountId_userId: {
                         accountId: brand.accountId,
@@ -429,26 +488,27 @@ export class BrandsService {
                 },
             });
 
-        if (
-            !membership ||
-            (
-                membership.role !== AccountRole.OWNER &&
-                membership.role !== AccountRole.ADMIN
-            )
-        ) {
-            throw new ForbiddenException(
-                'You do not have permission to deactivate this brand.',
-            );
+            if (
+                !membership ||
+                (
+                    membership.role !== AccountRole.OWNER &&
+                    membership.role !== AccountRole.ADMIN
+                )
+            ) {
+                throw new ForbiddenException(
+                    'You do not have permission to deactivate this brand.',
+                );
+            }
         }
 
-        // 3. Prevent repeated deactivation
+        // 3. Prevent repeated deactivation.
         if (!brand.isActive) {
             throw new BadRequestException(
                 'Brand is already inactive.',
             );
         }
 
-        // 4. Soft delete: deactivate brand
+        // 4. Soft delete: deactivate brand.
         await this.prisma.brand.update({
             where: {
                 id: brandId,
@@ -463,18 +523,34 @@ export class BrandsService {
         };
     }
 
-    async activate(userId: string, brandId: string) {
-        // 1. Find brand and verify account membership
+    // =====================================================
+    // ACTIVATE BRAND
+    // Platform Admin: Any brand
+    // Account OWNER / ADMIN: Their account brands only
+    // =====================================================
+
+    async activate(
+        userId: string,
+        brandId: string,
+        platformRole: PlatformRole,
+    ) {
+        const isPlatformAdmin = platformRole === PlatformRole.ADMIN;
+
+        // 1. Find brand with role-aware access.
         const brand = await this.prisma.brand.findFirst({
             where: {
                 id: brandId,
-                account: {
-                    members: {
-                        some: {
-                            userId,
+                ...(isPlatformAdmin
+                    ? {}
+                    : {
+                        account: {
+                            members: {
+                                some: {
+                                    userId,
+                                },
+                            },
                         },
-                    },
-                },
+                    }),
             },
             select: {
                 id: true,
@@ -488,8 +564,9 @@ export class BrandsService {
         }
 
         // 2. Verify account OWNER / ADMIN permission
-        const membership =
-            await this.prisma.accountUser.findUnique({
+        // for non-platform admins.
+        if (!isPlatformAdmin) {
+            const membership = await this.prisma.accountUser.findUnique({
                 where: {
                     accountId_userId: {
                         accountId: brand.accountId,
@@ -501,26 +578,27 @@ export class BrandsService {
                 },
             });
 
-        if (
-            !membership ||
-            (
-                membership.role !== AccountRole.OWNER &&
-                membership.role !== AccountRole.ADMIN
-            )
-        ) {
-            throw new ForbiddenException(
-                'You do not have permission to activate this brand.',
-            );
+            if (
+                !membership ||
+                (
+                    membership.role !== AccountRole.OWNER &&
+                    membership.role !== AccountRole.ADMIN
+                )
+            ) {
+                throw new ForbiddenException(
+                    'You do not have permission to activate this brand.',
+                );
+            }
         }
 
-        // 3. Prevent repeated activation
+        // 3. Prevent repeated activation.
         if (brand.isActive) {
             throw new BadRequestException(
                 'Brand is already active.',
             );
         }
 
-        // 4. Reactivate brand
+        // 4. Reactivate brand.
         const updatedBrand = await this.prisma.brand.update({
             where: {
                 id: brandId,

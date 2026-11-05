@@ -70,6 +70,7 @@ export class ContactImportController {
 
     return this.contactImportService.uploadFile(
       user.userId,
+      user.platformRole,
       brandId,
       file,
       groupId,
@@ -105,6 +106,7 @@ export class ContactImportController {
 
     return this.contactImportService.importFile(
       user.userId,
+      user.platformRole,
       brandId,
       file,
       groupId,

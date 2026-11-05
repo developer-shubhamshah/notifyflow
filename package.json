@@ -1,0 +1,13 @@
+﻿
+{
+  "name": "notifyflow",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "preflight": "powershell -ExecutionPolicy Bypass -File ./deployment/aws/preflight-check.ps1",
+    "deploy:web": "powershell -ExecutionPolicy Bypass -File ./deployment/aws/deploy-frontend.ps1 -ImageTag latest",
+    "prepare:api": "powershell -ExecutionPolicy Bypass -File ./deployment/aws/prepare-backend.ps1 -ImageTag latest",
+    "db:migrate:prod": "powershell -ExecutionPolicy Bypass -File ./deployment/aws/run-prisma-migrations.ps1 -ConfirmProduction",
+    "deploy:api": "powershell -ExecutionPolicy Bypass -File ./deployment/aws/deploy-backend-task.ps1"
+  }
+}

@@ -2,35 +2,41 @@
 import {
     BadRequestException,
     ConflictException,
-    ForbiddenException,
     Injectable,
     NotFoundException,
 } from '@nestjs/common';
 
-import { Prisma } from '@prisma/client';
+import { PlatformRole, Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateContactDto } from './dto/create-contact.dto';
 import { UpdateContactDto } from './dto/update-contact.dto';
+import { ContactQueryDto } from './dto/contact-query.dto';
 
 @Injectable()
 export class ContactsService {
-    constructor(private readonly prisma: PrismaService) { }
+    constructor(private readonly prisma: PrismaService) {}
 
     /**
      * Verify that the user belongs to the account
      * that owns the requested brand.
      */
-    private async verifyBrandAccess(userId: string, brandId: string) {
+    private async verifyBrandAccess(
+        userId: string,
+        brandId: string,
+        platformRole: PlatformRole,
+    ) {
         const brand = await this.prisma.brand.findFirst({
             where: {
                 id: brandId,
-                account: {
-                    members: {
-                        some: {
-                            userId,
-                        },
-                    },
-                },
+                ...(platformRole === PlatformRole.ADMIN
+                    ? {}
+                    : {
+                          account: {
+                              members: {
+                                  some: { userId },
+                              },
+                          },
+                      }),
             },
             select: {
                 id: true,
@@ -43,7 +49,9 @@ export class ContactsService {
         }
 
         if (!brand.isActive) {
-            throw new BadRequestException('Cannot manage contacts for an inactive brand');
+            throw new BadRequestException(
+                'Cannot manage contacts for an inactive brand',
+            );
         }
 
         return brand;
@@ -52,10 +60,14 @@ export class ContactsService {
     /**
      * Create a contact under a brand.
      */
-    async create(userId: string, brandId: string, dto: CreateContactDto) {
-        await this.verifyBrandAccess(userId, brandId);
+    async create(
+        userId: string,
+        platformRole: PlatformRole,
+        brandId: string,
+        dto: CreateContactDto,
+    ) {
+        await this.verifyBrandAccess(userId, brandId, platformRole);
 
-        // Consent requires the corresponding contact information.
         if (dto.whatsappConsent && !dto.mobile) {
             throw new BadRequestException(
                 'Mobile number is required for WhatsApp consent',
@@ -87,9 +99,15 @@ export class ContactsService {
                     smsConsent: dto.smsConsent ?? false,
                     emailConsent: dto.emailConsent ?? false,
 
-                    whatsappConsentAt: dto.whatsappConsent ? new Date() : null,
-                    smsConsentAt: dto.smsConsent ? new Date() : null,
-                    emailConsentAt: dto.emailConsent ? new Date() : null,
+                    whatsappConsentAt: dto.whatsappConsent
+                        ? new Date()
+                        : null,
+                    smsConsentAt: dto.smsConsent
+                        ? new Date()
+                        : null,
+                    emailConsentAt: dto.emailConsent
+                        ? new Date()
+                        : null,
                 },
             });
         } catch (error) {
@@ -107,20 +125,77 @@ export class ContactsService {
     }
 
     /**
-     * Get all active contacts belonging to a brand.
+     * Get contacts belonging to a brand.
      */
-    async findAll(userId: string, brandId: string) {
-        await this.verifyBrandAccess(userId, brandId);
+    async findAll(
+        userId: string,
+        platformRole: PlatformRole,
+        brandId: string,
+        query: ContactQueryDto,
+    ) {
+        await this.verifyBrandAccess(userId, brandId, platformRole);
 
-        return this.prisma.contact.findMany({
-            where: {
-                brandId,
-                isActive: true,
+        const page = query.page ?? 1;
+        const limit = query.limit ?? 10;
+        const skip = (page - 1) * limit;
+
+        const where: Prisma.ContactWhereInput = {
+            brandId,
+            ...(query.isActive !== undefined && {
+                isActive: query.isActive,
+            }),
+            ...(query.search && {
+                OR: [
+                    {
+                        firstName: {
+                            contains: query.search,
+                            mode: 'insensitive',
+                        },
+                    },
+                    {
+                        lastName: {
+                            contains: query.search,
+                            mode: 'insensitive',
+                        },
+                    },
+                    {
+                        email: {
+                            contains: query.search,
+                            mode: 'insensitive',
+                        },
+                    },
+                    {
+                        mobile: {
+                            contains: query.search,
+                        },
+                    },
+                ],
+            }),
+        };
+
+        const [contacts, total] = await this.prisma.$transaction([
+            this.prisma.contact.findMany({
+                where,
+                skip,
+                take: limit,
+                orderBy: {
+                    createdAt: 'desc',
+                },
+            }),
+            this.prisma.contact.count({ where }),
+        ]);
+
+        return {
+            data: contacts,
+            pagination: {
+                total,
+                page,
+                limit,
+                totalPages: Math.ceil(total / limit),
+                hasNextPage: page * limit < total,
+                hasPreviousPage: page > 1,
             },
-            orderBy: {
-                createdAt: 'desc',
-            },
-        });
+        };
     }
 
     /**
@@ -128,16 +203,16 @@ export class ContactsService {
      */
     async findOne(
         userId: string,
+        platformRole: PlatformRole,
         brandId: string,
         contactId: string,
     ) {
-        await this.verifyBrandAccess(userId, brandId);
+        await this.verifyBrandAccess(userId, brandId, platformRole);
 
         const contact = await this.prisma.contact.findFirst({
             where: {
                 id: contactId,
                 brandId,
-                isActive: true,
             },
         });
 
@@ -148,23 +223,25 @@ export class ContactsService {
         return contact;
     }
 
-
     /**
      * Update an existing contact.
+     * Supports editing both active and inactive contacts.
      */
     async update(
         userId: string,
+        platformRole: PlatformRole,
         brandId: string,
         contactId: string,
         dto: UpdateContactDto,
     ) {
-        await this.verifyBrandAccess(userId, brandId);
+        await this.verifyBrandAccess(userId, brandId, platformRole);
 
+        // Do not filter by isActive here.
+        // Inactive contacts must also be editable.
         const existingContact = await this.prisma.contact.findFirst({
             where: {
                 id: contactId,
                 brandId,
-                isActive: true,
             },
         });
 
@@ -172,19 +249,46 @@ export class ContactsService {
             throw new NotFoundException('Contact not found');
         }
 
-        if (dto.whatsappConsent === true && !(dto.mobile ?? existingContact.mobile)) {
+        // Calculate the final values after applying the update.
+        const finalMobile =
+            dto.mobile !== undefined
+                ? dto.mobile
+                : existingContact.mobile;
+
+        const finalEmail =
+            dto.email !== undefined
+                ? dto.email
+                : existingContact.email;
+
+        const finalWhatsappConsent =
+            dto.whatsappConsent !== undefined
+                ? dto.whatsappConsent
+                : existingContact.whatsappConsent;
+
+        const finalSmsConsent =
+            dto.smsConsent !== undefined
+                ? dto.smsConsent
+                : existingContact.smsConsent;
+
+        const finalEmailConsent =
+            dto.emailConsent !== undefined
+                ? dto.emailConsent
+                : existingContact.emailConsent;
+
+        // Validate final contact information against consent.
+        if (finalWhatsappConsent && !finalMobile) {
             throw new BadRequestException(
                 'Mobile number is required for WhatsApp consent',
             );
         }
 
-        if (dto.smsConsent === true && !(dto.mobile ?? existingContact.mobile)) {
+        if (finalSmsConsent && !finalMobile) {
             throw new BadRequestException(
                 'Mobile number is required for SMS consent',
             );
         }
 
-        if (dto.emailConsent === true && !(dto.email ?? existingContact.email)) {
+        if (finalEmailConsent && !finalEmail) {
             throw new BadRequestException(
                 'Email address is required for email consent',
             );
@@ -197,19 +301,23 @@ export class ContactsService {
         }
 
         if (dto.lastName !== undefined) {
-            data.lastName = dto.lastName.trim();
+            data.lastName = dto.lastName?.trim() ?? null;
         }
 
         if (dto.email !== undefined) {
-            data.email = dto.email.trim().toLowerCase();
+            data.email = dto.email
+                ? dto.email.trim().toLowerCase()
+                : null;
         }
 
         if (dto.mobile !== undefined) {
-            data.mobile = dto.mobile;
+            data.mobile = dto.mobile || null;
         }
 
+        // Update WhatsApp consent and timestamp.
         if (dto.whatsappConsent !== undefined) {
             data.whatsappConsent = dto.whatsappConsent;
+
             data.whatsappConsentAt = dto.whatsappConsent
                 ? existingContact.whatsappConsent
                     ? existingContact.whatsappConsentAt
@@ -217,8 +325,10 @@ export class ContactsService {
                 : null;
         }
 
+        // Update SMS consent and timestamp.
         if (dto.smsConsent !== undefined) {
             data.smsConsent = dto.smsConsent;
+
             data.smsConsentAt = dto.smsConsent
                 ? existingContact.smsConsent
                     ? existingContact.smsConsentAt
@@ -226,13 +336,20 @@ export class ContactsService {
                 : null;
         }
 
+        // Update Email consent and timestamp.
         if (dto.emailConsent !== undefined) {
             data.emailConsent = dto.emailConsent;
+
             data.emailConsentAt = dto.emailConsent
                 ? existingContact.emailConsent
                     ? existingContact.emailConsentAt
                     : new Date()
                 : null;
+        }
+
+        // Update Active / Inactive status.
+        if (dto.isActive !== undefined) {
+            data.isActive = dto.isActive;
         }
 
         try {
@@ -259,8 +376,13 @@ export class ContactsService {
     /**
      * Soft-delete a contact.
      */
-    async remove(userId: string, brandId: string, contactId: string) {
-        await this.verifyBrandAccess(userId, brandId);
+    async remove(
+        userId: string,
+        platformRole: PlatformRole,
+        brandId: string,
+        contactId: string,
+    ) {
+        await this.verifyBrandAccess(userId, brandId, platformRole);
 
         const contact = await this.prisma.contact.findFirst({
             where: {
@@ -284,4 +406,70 @@ export class ContactsService {
         });
     }
 
+    /**
+     * Get contact statistics.
+     */
+    async getStats(
+        userId: string,
+        platformRole: PlatformRole,
+        brandId: string,
+    ) {
+        await this.verifyBrandAccess(userId, brandId, platformRole);
+
+        const [
+            total,
+            active,
+            inactive,
+            whatsappConsent,
+            smsConsent,
+            emailConsent,
+        ] = await this.prisma.$transaction([
+            this.prisma.contact.count({
+                where: { brandId },
+            }),
+
+            this.prisma.contact.count({
+                where: { brandId, isActive: true },
+            }),
+
+            this.prisma.contact.count({
+                where: { brandId, isActive: false },
+            }),
+
+            this.prisma.contact.count({
+                where: {
+                    brandId,
+                    isActive: true,
+                    whatsappConsent: true,
+                },
+            }),
+
+            this.prisma.contact.count({
+                where: {
+                    brandId,
+                    isActive: true,
+                    smsConsent: true,
+                },
+            }),
+
+            this.prisma.contact.count({
+                where: {
+                    brandId,
+                    isActive: true,
+                    emailConsent: true,
+                },
+            }),
+        ]);
+
+        return {
+            total,
+            active,
+            inactive,
+            consent: {
+                whatsapp: whatsappConsent,
+                sms: smsConsent,
+                email: emailConsent,
+            },
+        };
+    }
 }

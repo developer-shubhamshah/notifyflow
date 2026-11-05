@@ -44,4 +44,8 @@ export class UpdateContactDto {
   @IsOptional()
   @IsBoolean()
   emailConsent?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  isActive?: boolean;
 }

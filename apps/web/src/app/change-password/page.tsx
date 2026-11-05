@@ -29,7 +29,7 @@ export default function ChangePasswordPage() {
     }
 
     if (currentPassword === newPassword) {
-      setError("New password must be different from the temporary password.");
+      setError("New password must be different from the Current Password.");
       return;
     }
 
@@ -87,7 +87,7 @@ export default function ChangePasswordPage() {
         <form onSubmit={handleSubmit} className="space-y-5">
           <div>
             <label htmlFor="currentPassword" className="mb-2 block text-sm font-medium text-slate-700">
-              Temporary password
+              Current password
             </label>
             <input
               id="currentPassword"
@@ -97,7 +97,7 @@ export default function ChangePasswordPage() {
               value={currentPassword}
               onChange={(event) => setCurrentPassword(event.target.value)}
               className="h-12 w-full rounded-xl border border-slate-200 px-4 text-sm outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-500/10"
-              placeholder="Enter your temporary password"
+              placeholder="Enter your current password"
             />
           </div>
 

@@ -1,4 +1,3 @@
-
 import {
     Body,
     Controller,
@@ -12,19 +11,19 @@ import {
 
 import { BrandsService } from './brands.service';
 import { CreateBrandDto } from './dto/create-brand.dto';
+import { UpdateBrandDto } from './dto/update-brand.dto';
 
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { PlatformAdminGuard } from '../auth/guards/platform-admin.guard';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import type { AuthenticatedUser } from '../auth/decorators/current-user.decorator';
-import { UpdateBrandDto } from './dto/update-brand.dto';
-import { PlatformAdminGuard } from '../auth/guards/platform-admin.guard';
 
 @Controller('brands')
 @UseGuards(JwtAuthGuard)
 export class BrandsController {
     constructor(
         private readonly brandsService: BrandsService,
-    ) { }
+    ) {}
 
     @Post()
     @UseGuards(PlatformAdminGuard)
@@ -56,6 +55,7 @@ export class BrandsController {
         return this.brandsService.findOne(
             user.userId,
             brandId,
+            user.platformRole,
         );
     }
 
@@ -69,6 +69,7 @@ export class BrandsController {
             user.userId,
             brandId,
             updateBrandDto,
+            user.platformRole,
         );
     }
 
@@ -80,6 +81,7 @@ export class BrandsController {
         return this.brandsService.remove(
             user.userId,
             brandId,
+            user.platformRole,
         );
     }
 
@@ -91,6 +93,7 @@ export class BrandsController {
         return this.brandsService.activate(
             user.userId,
             brandId,
+            user.platformRole,
         );
     }
 }

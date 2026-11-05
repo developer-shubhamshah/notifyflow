@@ -1,0 +1,22 @@
+
+# Local AWS deployment artifacts
+notifyflow-secret.json
+*-overrides.json
+*-logs.json
+
+# Generated ECS task and AWS configuration files
+*-task.json
+api-production-task.json
+api-migration-task.json
+ecs-task-definition.json
+ecs-task-execution-trust-policy.json
+github-ecr-policy.json
+github-oidc-trust-policy.json
+github-ecr-push-policy-v3.json
+github-ecs-deploy-policy.json
+notifyflow-dns.json
+notifyflow-redirect.json
+root-domain-dns.json
+web-listener-actions.json
+web-listener-conditions.json
+web-sg-rule.json

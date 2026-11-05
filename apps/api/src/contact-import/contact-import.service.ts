@@ -9,6 +9,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { parse as parseCsv } from 'csv-parse/sync';
 import readXlsxFile from 'read-excel-file/node';
 import type { Express } from 'express';
+import { PlatformRole } from '@prisma/client';
 
 type ImportRow = Record<string, unknown>;
 
@@ -45,27 +46,57 @@ type ValidationResult = {
 export class ContactImportService {
     constructor(private readonly prisma: PrismaService) { }
 
+
     private async verifyBrandAccess(
         userId: string,
         brandId: string,
+        platformRole: PlatformRole,
     ) {
-        const brand = await this.prisma.brand.findFirst({
-            where: {
-                id: brandId,
-                account: {
-                    members: {
-                        some: { userId },
-                    },
-                },
-            },
+        const brand = await this.prisma.brand.findUnique({
+            where: { id: brandId },
             select: {
                 id: true,
+                ownerId: true,
                 isActive: true,
+                members: {
+                    where: { userId },
+                    select: { id: true },
+                },
+                account: {
+                    select: {
+                        members: {
+                            where: { userId },
+                            select: { id: true },
+                        },
+                    },
+                },
             },
         });
 
         if (!brand) {
-            throw new NotFoundException('Brand not found');
+            throw new NotFoundException('Brand ID does not exist');
+        }
+
+        const isAdmin = platformRole === PlatformRole.ADMIN;
+        const isOwner = brand.ownerId === userId;
+        const isBrandMember = brand.members.length > 0;
+        const isAccountMember = brand.account.members.length > 0;
+
+        console.log('[Contact Import Authorization]', {
+            userId,
+            brandId,
+            platformRole,
+            isAdmin,
+            isOwner,
+            isBrandMember,
+            isAccountMember,
+            isActive: brand.isActive,
+        });
+
+        if (!isAdmin && !isOwner && !isBrandMember && !isAccountMember) {
+            throw new NotFoundException(
+                'User does not have access to this brand',
+            );
         }
 
         if (!brand.isActive) {
@@ -110,12 +141,14 @@ export class ContactImportService {
 
     async uploadFile(
         userId: string,
+        platformRole: PlatformRole,
         brandId: string,
         file: Express.Multer.File,
         groupId?: string,
     ) {
         const result = await this.validateFile(
             userId,
+            platformRole,
             brandId,
             file,
             groupId,
@@ -129,12 +162,14 @@ export class ContactImportService {
 
     async importFile(
         userId: string,
+        platformRole: PlatformRole,
         brandId: string,
         file: Express.Multer.File,
         groupId?: string,
     ) {
         const result = await this.validateFile(
             userId,
+            platformRole,
             brandId,
             file,
             groupId,
@@ -220,11 +255,12 @@ export class ContactImportService {
 
     private async validateFile(
         userId: string,
+        platformRole: PlatformRole,
         brandId: string,
         file: Express.Multer.File,
         groupId?: string,
     ): Promise<ValidationResult> {
-        await this.verifyBrandAccess(userId, brandId);
+        await this.verifyBrandAccess(userId, brandId, platformRole);
         await this.verifyContactGroup(brandId, groupId);
 
         const extension = file.originalname

@@ -25,7 +25,11 @@ import {
   Users,
   Wallet,
   X,
+  LockKeyhole,
 } from "lucide-react";
+import { useRouter } from "next/navigation";
+import Link from "next/link";
+
 interface Brand {
   id: string;
   name: string;
@@ -43,13 +47,13 @@ interface BrandsResponse {
 }
 
 const navigation = [
-  { label: "Dashboard", icon: LayoutDashboard },
-  { label: "Brands", icon: Building2 },
-  { label: "Contacts", icon: Users },
-  { label: "Groups", icon: Users },
-  { label: "Lifecycle", icon: Activity },
-  { label: "Campaigns", icon: Send },
-  { label: "Schedules", icon: CalendarDays },
+  { label: "Dashboard", href: "/dashboard", icon: LayoutDashboard },
+  { label: "Brands", href: "/dashboard/brands", icon: Building2 },
+  { label: "Contacts", href: "/dashboard/contacts", icon: Users },
+  { label: "Groups", href: "/dashboard/groups", icon: Users },
+  { label: "Lifecycle", href: "/dashboard/lifecycle", icon: Activity },
+  { label: "Campaigns", href: "/dashboard/campaigns", icon: Send },
+  { label: "Schedules", href: "/dashboard/schedules", icon: CalendarDays },
 ];
 
 const channels = [
@@ -132,6 +136,29 @@ export default function Dashboard() {
   const [brandsLoading, setBrandsLoading] = useState(true);
   const [brandsError, setBrandsError] = useState("");
   const [isCreateBrandOpen, setIsCreateBrandOpen] = useState(false);
+  const [isBrandMenuOpen, setIsBrandMenuOpen] = useState(false);
+  const [selectedBrandId, setSelectedBrandId] = useState("");
+  const [totalContacts, setTotalContacts] = useState(0);
+  const [totalContactsLoading, setTotalContactsLoading] = useState(true);
+  const [totalContactsError, setTotalContactsError] = useState(false);
+  const router = useRouter();
+
+  const selectedBrand =
+    brands.find((brand) => brand.id === selectedBrandId) ?? null;
+
+  function selectBrand(brandId: string) {
+    const brand = brands.find((item) => item.id === brandId);
+
+    if (!brand) return;
+
+    localStorage.setItem("notifyflow_active_brand_id", brand.id);
+
+    setSelectedBrandId(brand.id);
+    setIsBrandMenuOpen(false);
+    setMobileMenuOpen(false);
+
+    router.push("/dashboard");
+  }
 
   const handleLogout = async () => {
     if (isLoggingOut) return;
@@ -173,20 +200,29 @@ export default function Dashboard() {
         });
 
         if (!response.ok) {
-          throw new Error("Unable to load profile");
+          router.replace("/login");
+          return;
         }
 
         const data: ProfileResponse = await response.json();
+
+        // Only Platform Admin can access the root dashboard.
+        if (data.user.platformRole !== "ADMIN") {
+          router.replace("/dashboard");
+          return;
+        }
+
         setCurrentUser(data.user);
       } catch (error) {
         console.error("Profile loading failed:", error);
+        router.replace("/login");
       } finally {
         setProfileLoading(false);
       }
     };
 
     fetchProfile();
-  }, []);
+  }, [router]);
 
   useEffect(() => {
     const fetchBrands = async () => {
@@ -204,7 +240,28 @@ export default function Dashboard() {
           throw new Error(data.message || "Failed to fetch brands");
         }
 
-        setBrands(data.brands ?? []);
+        const availableBrands = data.brands ?? [];
+
+        setBrands(availableBrands);
+
+        if (availableBrands.length > 0) {
+          const savedBrandId = localStorage.getItem(
+            "notifyflow_active_brand_id"
+          );
+
+          const savedBrand = availableBrands.find(
+            (brand) => brand.id === savedBrandId
+          );
+
+          const activeBrand = savedBrand ?? availableBrands[0];
+
+          setSelectedBrandId(activeBrand.id);
+
+          localStorage.setItem(
+            "notifyflow_active_brand_id",
+            activeBrand.id
+          );
+        }
       } catch (error) {
         setBrandsError(
           error instanceof Error ? error.message : "Unable to load brands",
@@ -216,6 +273,67 @@ export default function Dashboard() {
 
     fetchBrands();
   }, []);
+
+  useEffect(() => {
+    if (brandsLoading) return;
+
+    if (brands.length === 0) {
+      setTotalContacts(0);
+      setTotalContactsLoading(false);
+      return;
+    }
+
+    let cancelled = false;
+
+    async function loadTotalContacts() {
+      try {
+        setTotalContactsLoading(true);
+        setTotalContactsError(false);
+
+        const responses = await Promise.all(
+          brands.map(async (brand) => {
+            const response = await fetch(
+              `/api/brands/${encodeURIComponent(brand.id)}/contacts/stats`,
+              { cache: "no-store" }
+            );
+
+            if (!response.ok) {
+              throw new Error(
+                `Failed to load contacts for ${brand.name}`
+              );
+            }
+
+            return response.json();
+          })
+        );
+
+        const total = responses.reduce(
+          (sum, stats) => sum + (Number(stats.total) || 0),
+          0
+        );
+
+        if (!cancelled) {
+          setTotalContacts(total);
+        }
+      } catch (error) {
+        console.error("Platform contact statistics failed:", error);
+
+        if (!cancelled) {
+          setTotalContactsError(true);
+        }
+      } finally {
+        if (!cancelled) {
+          setTotalContactsLoading(false);
+        }
+      }
+    }
+
+    loadTotalContacts();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [brands, brandsLoading]);
 
   const handleCreateBrand = async (
     event: React.FormEvent<HTMLFormElement>,
@@ -309,7 +427,13 @@ export default function Dashboard() {
 
       {/* Sidebar */}
       <aside
-        className={`fixed inset-y-0 left-0 z-50 flex w-64 flex-col border-r border-slate-200 bg-white transition-transform duration-300 lg:translate-x-0 ${mobileMenuOpen ? "translate-x-0" : "-translate-x-full"
+        className={`fixed inset-y-0 left-0 z-50 flex w-64 flex-col
+    border-r border-slate-200 bg-white
+    transition-all duration-300 ease-in-out
+    lg:translate-x-0
+    ${mobileMenuOpen
+            ? "translate-x-0"
+            : "-translate-x-full"
           }`}
       >
         <div className="flex h-20 items-center justify-between border-b border-slate-100 px-6">
@@ -339,15 +463,61 @@ export default function Dashboard() {
             Workspace
           </p>
 
-          <div className="flex cursor-pointer items-center gap-3 rounded-xl border border-slate-200 p-3 hover:bg-slate-50">
-            <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-amber-100 text-amber-700">
-              <Building2 size={18} />
-            </div>
-            <div className="min-w-0 flex-1">
-              <p className="truncate text-sm font-semibold">My Account</p>
-              <p className="text-xs text-slate-400">3 brands</p>
-            </div>
-            <ChevronDown size={16} className="text-slate-400" />
+          <div className="relative">
+            <button
+              type="button"
+              disabled={brandsLoading || brands.length === 0}
+              onClick={() => setIsBrandMenuOpen((prev) => !prev)}
+              aria-expanded={isBrandMenuOpen}
+              className="flex w-full items-center gap-3 rounded-xl border border-slate-200 p-3 text-left transition hover:border-indigo-200 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-amber-100 text-amber-700">
+                <Building2 size={18} />
+              </div>
+
+              <div className="min-w-0 flex-1">
+                <p className="truncate text-sm font-semibold text-slate-800">
+                  {brandsLoading
+                    ? "Loading brands..."
+                    : selectedBrand?.name || "No brand available"}
+                </p>
+                <p className="text-xs text-slate-400">
+                  {brands.length} {brands.length === 1 ? "brand" : "brands"} available
+                </p>
+              </div>
+
+              <ChevronDown
+                size={16}
+                className={`shrink-0 text-slate-400 transition ${isBrandMenuOpen ? "rotate-180" : ""
+                  }`}
+              />
+            </button>
+
+            {isBrandMenuOpen && (
+              <div className="absolute left-0 right-0 top-full z-[60] mt-2 max-h-64 overflow-y-auto rounded-xl border border-slate-200 bg-white p-2 shadow-xl">
+                {brands.map((brand) => {
+                  const selected = brand.id === selectedBrandId;
+
+                  return (
+                    <button
+                      key={brand.id}
+                      type="button"
+                      onClick={() => selectBrand(brand.id)}
+                      className={`flex w-full items-center gap-3 rounded-lg px-3 py-3 text-left transition ${selected
+                        ? "bg-indigo-50 text-indigo-700"
+                        : "text-slate-600 hover:bg-slate-50"
+                        }`}
+                    >
+                      <Building2 size={17} />
+                      <span className="flex-1 truncate text-sm font-medium">
+                        {brand.name}
+                      </span>
+                      {selected && <span className="text-xs">Selected</span>}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
           </div>
         </div>
 
@@ -363,7 +533,10 @@ export default function Dashboard() {
             return (
               <button
                 key={item.label}
-                onClick={() => handleNavigation(item.label)}
+                onClick={() => {
+                  router.push(item.href);
+                  setMobileMenuOpen(false);
+                }}
                 className={`flex w-full items-center gap-3 rounded-xl px-3 py-3 text-sm font-medium transition ${active
                   ? "bg-indigo-50 text-indigo-700"
                   : "text-slate-500 hover:bg-slate-50 hover:text-slate-900"
@@ -371,6 +544,7 @@ export default function Dashboard() {
               >
                 <Icon size={19} />
                 {item.label}
+
                 {item.label === "Campaigns" && (
                   <span className="ml-auto rounded-full bg-indigo-100 px-2 py-0.5 text-xs text-indigo-700">
                     4
@@ -458,6 +632,19 @@ export default function Dashboard() {
                       : "Brand Owner"}
                   </p>
                 </div>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsProfileMenuOpen(false);
+                    window.location.href = "/change-password";
+                  }}
+                  className="mt-3 flex w-full items-center gap-2 rounded-lg px-2 py-2 text-sm font-medium text-slate-700 transition hover:bg-violet-50 hover:text-violet-700"
+                >
+                  <LockKeyhole size={16} />
+                  Change Password
+                </button>
+
                 <button
                   type="button"
                   onClick={handleLogout}
@@ -546,8 +733,14 @@ export default function Dashboard() {
               },
               {
                 title: "Total contacts",
-                value: "8,420",
-                change: "+12.5% this month",
+                value: totalContactsLoading
+                  ? "..."
+                  : totalContactsError
+                    ? "—"
+                    : totalContacts.toLocaleString("en-IN"),
+                change: totalContactsError
+                  ? "Unable to load contacts"
+                  : "Across all brands",
                 icon: Users,
                 iconBg: "bg-blue-50 text-blue-600",
               },
@@ -695,7 +888,11 @@ export default function Dashboard() {
                   Create Brand
                 </button>
 
-                <button className="flex items-center gap-1 text-sm font-semibold text-indigo-600">
+                <button
+                  type="button"
+                  onClick={() => router.push("/dashboard/brands")}
+                  className="flex items-center gap-1 text-sm font-semibold text-indigo-600 transition hover:text-indigo-800"
+                >
                   View all <ChevronRight size={17} />
                 </button>
               </div>
@@ -716,12 +913,17 @@ export default function Dashboard() {
                 </p>
               ) : (
                 brands.map((brand) => (
-                  <div
+                  <button
                     key={brand.id}
-                    className="rounded-xl border border-slate-200 p-4 transition hover:border-indigo-200 hover:shadow-sm"
+                    type="button"
+                    onClick={() => {
+                      localStorage.setItem("notifyflow_active_brand_id", brand.id);
+                      router.push("/dashboard");
+                    }}
+                    className="w-full rounded-xl border border-slate-200 p-4 text-left transition hover:border-indigo-300 hover:shadow-md focus:outline-none focus:ring-2 focus:ring-indigo-500"
                   >
                     <div className="flex items-center gap-3">
-                      <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-indigo-100 text-sm font-bold text-indigo-700">
+                      <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-indigo-100 text-sm font-bold text-indigo-700">
                         {brand.name.substring(0, 2).toUpperCase()}
                       </div>
 
@@ -740,17 +942,17 @@ export default function Dashboard() {
                       />
                     </div>
 
-                    <div className="mt-5 border-t border-slate-100 pt-4">
+                    <div className="mt-5 border-t border-slate-100 pt-4 text-left">
                       <span
                         className={`rounded-full px-3 py-1 text-xs font-medium ${brand.isActive
-                          ? "bg-green-50 text-green-700"
-                          : "bg-red-50 text-red-700"
+                            ? "bg-green-50 text-green-700"
+                            : "bg-red-50 text-red-700"
                           }`}
                       >
                         {brand.isActive ? "Active" : "Inactive"}
                       </span>
                     </div>
-                  </div>
+                  </button>
                 ))
               )}
             </div>
