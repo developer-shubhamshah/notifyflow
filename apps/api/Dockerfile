@@ -10,7 +10,9 @@ RUN apt-get update -y \
     && rm -rf /var/lib/apt/lists/*
 
 COPY package*.json ./
-RUN npm ci
+RUN npm ci --include=dev
+RUN npx prisma --version
+RUN npm ls prisma @prisma/client
 
 # Stage 2: Build
 FROM dependencies AS builder
